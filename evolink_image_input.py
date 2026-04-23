@@ -46,8 +46,12 @@ class EvolinkImageInputNode:
     CATEGORY = "image"
     OUTPUT_NODE = True
 
-    # Class-level output directory
-    OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
+    # Class-level output directory - ComfyUI's root output folder
+    # Custom node is at: ComfyUI/custom_nodes/ComfyUI_Evolink/
+    # Output folder is at: ComfyUI/output/
+    _node_dir = os.path.dirname(os.path.abspath(__file__))
+    _comfyui_root = os.path.abspath(os.path.join(_node_dir, "..", ".."))
+    OUTPUT_DIR = os.path.join(_comfyui_root, "output")
 
     def _save_tensor_to_file(self, image_tensor: torch.Tensor, output_dir: str, prefix: str, index: int) -> str:
         """Save image tensor to file and return the file path"""
@@ -107,8 +111,9 @@ class EvolinkImageInputNode:
                 try:
                     filepath = self._save_tensor_to_file(img_tensor, self.OUTPUT_DIR, prefix, image_count)
                     url = self._get_public_url(filepath, self.PUBLIC_BASE_URL)
-                    saved_urls.append(url)
-                    image_count += 1
+                    if url.startswith("http"):
+                        saved_urls.append(url)
+                        image_count += 1
                 except Exception as e:
                     print(f"[EvolinkImageInput] Failed to save {key}: {e}")
 

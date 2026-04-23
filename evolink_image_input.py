@@ -3,12 +3,20 @@ Evolink Image Input Node for ComfyUI
 
 Uploads local images and converts them to publicly accessible URLs.
 Max 14 images, 20MB per image. Formats: jpeg, jpg, png, webp.
+
+Primary: Use ComfyUI output folder URL
+Fallback: Upload to imgbb if URL is not publicly accessible
 """
 
 import os
 import hashlib
 import time as time_module
-from typing import Tuple
+import urllib.request
+import urllib.error
+import urllib.parse
+import base64
+import json
+from typing import Tuple, Optional
 
 import torch
 import numpy as np
@@ -20,10 +28,13 @@ class EvolinkImageInputNode:
     Evolink Image Input - Upload local images to generate public URLs
 
     Accepts multiple image inputs and converts them to publicly
-    accessible URLs via ComfyUI's public address.
+    accessible URLs via ComfyUI's public address or imgbb fallback.
     """
 
     PUBLIC_BASE_URL = "https://comfyui.lanqiu.tech"
+
+    # imgbb free API key (anonymous tier)
+    IMGBB_API_KEY = "dcay4528303703a99a5c66894c356ab1"
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -37,6 +48,7 @@ class EvolinkImageInputNode:
             inputs["optional"][f"image{i}"] = ("IMAGE", {"default": None})
 
         inputs["optional"]["prefix"] = ("STRING", {"default": "evolink", "multiline": False})
+        inputs["optional"]["force_imgbb"] = ("BOOLEAN", {"default": False})
 
         return inputs
 
@@ -47,8 +59,6 @@ class EvolinkImageInputNode:
     OUTPUT_NODE = True
 
     # Class-level output directory - ComfyUI's root output folder
-    # Custom node is at: ComfyUI/custom_nodes/ComfyUI_Evolink/
-    # Output folder is at: ComfyUI/output/
     _node_dir = os.path.dirname(os.path.abspath(__file__))
     _comfyui_root = os.path.abspath(os.path.join(_node_dir, "..", ".."))
     OUTPUT_DIR = os.path.join(_comfyui_root, "output")
@@ -57,7 +67,6 @@ class EvolinkImageInputNode:
         """Save image tensor to file and return the file path"""
         # image_tensor shape: (B, H, W, C) or (H, W, C)
         if image_tensor.dim() == 4:
-            # Has batch dimension, take first
             img = image_tensor[0]
         else:
             img = image_tensor
@@ -86,20 +95,47 @@ class EvolinkImageInputNode:
         filename = os.path.basename(filepath)
         return f"{public_base}/{filename}"
 
+    def _check_url_accessible(self, url: str, timeout: int = 5) -> bool:
+        """Check if a URL is publicly accessible"""
+        try:
+            req = urllib.request.Request(url, method="HEAD")
+            with urllib.request.urlopen(req, timeout=timeout) as response:
+                return response.status == 200
+        except Exception:
+            return False
+
+    def _upload_to_imgbb(self, filepath: str) -> Optional[str]:
+        """Upload image to imgbb and return public URL"""
+        try:
+            with open(filepath, "rb") as f:
+                image_data = base64.b64encode(f.read()).decode("utf-8")
+
+            post_data = urllib.parse.urlencode({
+                "key": self.IMGBB_API_KEY,
+                "image": image_data,
+            }).encode("utf-8")
+
+            req = urllib.request.Request(
+                "https://api.imgbb.com/1/upload",
+                data=post_data,
+                method="POST"
+            )
+
+            with urllib.request.urlopen(req, timeout=30) as response:
+                result = json.loads(response.read().decode("utf-8"))
+                if result.get("success"):
+                    return result["data"]["url"]
+        except Exception as e:
+            print(f"[EvolinkImageInput] imgbb upload failed: {e}")
+        return None
+
     def upload_images(self, **kwargs) -> Tuple[str, str]:
         """
         Convert image tensors to publicly accessible URLs
-
-        Args:
-            image1...image14: Optional image tensors from upstream nodes
-            prefix: Filename prefix for saved images
-
-        Returns:
-            image_urls: Newline-separated list of public URLs
-            image_count: Number of images successfully converted
         """
-        # Extract prefix and collect non-None images
         prefix = kwargs.pop("prefix", "evolink")
+        force_imgbb = kwargs.pop("force_imgbb", False)
+
         image_count = 0
         saved_urls = []
 
@@ -111,6 +147,19 @@ class EvolinkImageInputNode:
                 try:
                     filepath = self._save_tensor_to_file(img_tensor, self.OUTPUT_DIR, prefix, image_count)
                     url = self._get_public_url(filepath, self.PUBLIC_BASE_URL)
+
+                    # Check if URL is accessible, fallback to imgbb if not
+                    if force_imgbb or not self._check_url_accessible(url):
+                        print(f"[EvolinkImageInput] Output URL not accessible, uploading to imgbb...")
+                        imgbb_url = self._upload_to_imgbb(filepath)
+                        if imgbb_url:
+                            url = imgbb_url
+                            print(f"[EvolinkImageInput] imgbb URL: {url}")
+                        else:
+                            print(f"[EvolinkImageInput] WARNING: Using potentially inaccessible URL: {url}")
+                    else:
+                        print(f"[EvolinkImageInput] URL accessible: {url}")
+
                     if url.startswith("http"):
                         saved_urls.append(url)
                         image_count += 1
@@ -120,11 +169,10 @@ class EvolinkImageInputNode:
         if not saved_urls:
             return ("", "0")
 
-        # Join URLs with newline
         url_string = "\n".join(saved_urls)
 
-        print(f"[EvolinkImageInput] Saved {len(saved_urls)} images to {self.OUTPUT_DIR}")
-        print(f"[EvolinkImageInput] Public URLs: {url_string}")
+        print(f"[EvolinkImageInput] Saved {len(saved_urls)} images")
+        print(f"[EvolinkImageInput] URLs: {url_string}")
 
         return (url_string, str(len(saved_urls)))
 

@@ -113,12 +113,19 @@ class EvolinkGPTImage2Node:
 
         raise Exception(f"Task polling timeout after {max_polls} attempts")
 
-    def _download_image(self, url: str) -> Image.Image:
+    def _download_image(self, url: str, api_key: str = "") -> Image.Image:
         """Download image from URL and return PIL Image"""
         try:
-            with urllib.request.urlopen(url, timeout=30) as response:
+            headers = {}
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
+
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=30) as response:
                 image_data = response.read()
                 return Image.open(io.BytesIO(image_data)).convert("RGB")
+        except urllib.error.HTTPError as e:
+            raise Exception(f"Failed to download image (HTTP {e.code}): {url}")
         except Exception as e:
             raise Exception(f"Failed to download image from {url}: {str(e)}")
 
@@ -180,10 +187,12 @@ class EvolinkGPTImage2Node:
         pil_images = []
         for idx, image_url in enumerate(results):
             try:
-                img = self._download_image(image_url)
+                print(f"[EvolinkGPTImage2] Downloading {idx}: {image_url}")
+                img = self._download_image(image_url, api_key)
                 pil_images.append(img)
+                print(f"[EvolinkGPTImage2] Downloaded {idx} OK: {img.size}")
             except Exception as e:
-                print(f"Warning: Failed to download image {idx}: {e}")
+                print(f"[EvolinkGPTImage2] Failed to download image {idx}: {e}")
 
         # Convert to tensors and stack
         if not pil_images:

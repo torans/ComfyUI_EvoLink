@@ -11,8 +11,8 @@ import asyncio
 import json
 import io
 import numpy as np
-import urllib.request
-import urllib.error
+import requests
+from PIL import Image
 from typing import Tuple, List, Optional
 
 import torch
@@ -74,26 +74,26 @@ class EvolinkGPTImage2Node:
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
 
-        request_data = None
-        if data:
-            request_data = json.dumps(data).encode("utf-8")
-
-        req = urllib.request.Request(url, data=request_data, headers=headers, method=method)
-
         try:
-            with urllib.request.urlopen(req, timeout=60) as response:
-                response_body = response.read().decode("utf-8")
-                return json.loads(response_body)
-        except urllib.error.HTTPError as e:
-            error_body = e.read().decode("utf-8") if e.fp else ""
+            if method == "GET":
+                response = requests.get(url, headers=headers, timeout=60)
+            elif method == "POST":
+                response = requests.post(url, json=data, headers=headers, timeout=60)
+            else:
+                raise Exception(f"Unsupported HTTP method: {method}")
+
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.HTTPError as e:
+            error_msg = e.response.text or str(e)
             try:
-                error_json = json.loads(error_body)
-                error_msg = error_json.get("error", {}).get("message", error_body)
+                error_json = e.response.json()
+                error_msg = error_json.get("error", {}).get("message", error_msg)
             except:
-                error_msg = error_body
-            raise Exception(f"API Error {e.code}: {error_msg}")
-        except urllib.error.URLError as e:
-            raise Exception(f"Network Error: {e.reason}")
+                pass
+            raise Exception(f"API Error {e.response.status_code}: {error_msg}")
+        except requests.exceptions.RequestException as e:
+            raise Exception(f"Network Error: {str(e)}")
 
     async def _poll_task_status(self, task_id: str, api_key: str, poll_interval: int, max_polls: int) -> dict:
         """Poll task status until completion or failure"""
@@ -113,19 +113,15 @@ class EvolinkGPTImage2Node:
 
         raise Exception(f"Task polling timeout after {max_polls} attempts")
 
-    def _download_image(self, url: str, api_key: str = "") -> Image.Image:
+    def _download_image(self, url: str) -> Image.Image:
         """Download image from URL and return PIL Image"""
         try:
-            headers = {}
-            if api_key:
-                headers["Authorization"] = f"Bearer {api_key}"
-
-            req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=30) as response:
-                image_data = response.read()
-                return Image.open(io.BytesIO(image_data)).convert("RGB")
-        except urllib.error.HTTPError as e:
-            raise Exception(f"Failed to download image (HTTP {e.code}): {url}")
+            response = requests.get(url, timeout=30)
+            response.raise_for_status()
+            image_data = response.content
+            return Image.open(io.BytesIO(image_data)).convert("RGB")
+        except requests.exceptions.HTTPError as e:
+            raise Exception(f"Failed to download image (HTTP {e.response.status_code}): {url}")
         except Exception as e:
             raise Exception(f"Failed to download image from {url}: {str(e)}")
 
@@ -188,7 +184,7 @@ class EvolinkGPTImage2Node:
         for idx, image_url in enumerate(results):
             try:
                 print(f"[EvolinkGPTImage2] Downloading {idx}: {image_url}")
-                img = self._download_image(image_url, api_key)
+                img = self._download_image(image_url)
                 pil_images.append(img)
                 print(f"[EvolinkGPTImage2] Downloaded {idx} OK: {img.size}")
             except Exception as e:

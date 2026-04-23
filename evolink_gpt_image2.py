@@ -209,19 +209,48 @@ class EvolinkGPTImage2Node:
         """Synchronous wrapper for async generation"""
 
         try:
-            loop = asyncio.get_event_loop()
+            # Check if we're already in an async context
+            loop = asyncio.get_running_loop()
+            # Already in async context - use thread pool
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(
+                    self._generate_image_sync,
+                    api_key, prompt, model, size, resolution, quality,
+                    n, image_urls, callback_url, poll_interval, max_polls
+                )
+                return future.result()
         except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+            # No running loop, safe to create one
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
 
-        image_batch, task_id, status_info = loop.run_until_complete(
-            self.generate_image_async(
-                api_key, prompt, model, size, resolution, quality,
-                n, image_urls, callback_url, poll_interval, max_polls
+            return loop.run_until_complete(
+                self.generate_image_async(
+                    api_key, prompt, model, size, resolution, quality,
+                    n, image_urls, callback_url, poll_interval, max_polls
+                )
             )
-        )
 
-        return image_batch, task_id, status_info
+    def _generate_image_sync(self, api_key: str, prompt: str, model: str,
+                             size: str, resolution: str, quality: str,
+                             n: int, image_urls: str, callback_url: str,
+                             poll_interval: int, max_polls: int) -> Tuple[torch.Tensor, str, str]:
+        """Synchronous version for thread pool execution"""
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            return loop.run_until_complete(
+                self.generate_image_async(
+                    api_key, prompt, model, size, resolution, quality,
+                    n, image_urls, callback_url, poll_interval, max_polls
+                )
+            )
+        finally:
+            loop.close()
 
 
 # Node registration

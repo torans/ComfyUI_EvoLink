@@ -33,9 +33,6 @@ class EvolinkImageInputNode:
 
     PUBLIC_BASE_URL = "https://comfyui.lanqiu.tech"
 
-    # imgbb free API key (anonymous tier)
-    IMGBB_API_KEY = "dcay4528303703a99a5c66894c356ab1"
-
     @classmethod
     def INPUT_TYPES(cls):
         inputs = {
@@ -49,6 +46,7 @@ class EvolinkImageInputNode:
 
         inputs["optional"]["prefix"] = ("STRING", {"default": "evolink", "multiline": False})
         inputs["optional"]["force_imgbb"] = ("BOOLEAN", {"default": False})
+        inputs["optional"]["imgbb_api_key"] = ("STRING", {"default": "", "multiline": False})
 
         return inputs
 
@@ -104,14 +102,17 @@ class EvolinkImageInputNode:
         except Exception:
             return False
 
-    def _upload_to_imgbb(self, filepath: str) -> Optional[str]:
+    def _upload_to_imgbb(self, filepath: str, api_key: str) -> Optional[str]:
         """Upload image to imgbb and return public URL"""
+        if not api_key:
+            print(f"[EvolinkImageInput] imgbb API key not provided, skipping upload")
+            return None
         try:
             with open(filepath, "rb") as f:
                 image_data = base64.b64encode(f.read()).decode("utf-8")
 
             post_data = urllib.parse.urlencode({
-                "key": self.IMGBB_API_KEY,
+                "key": api_key,
                 "image": image_data,
             }).encode("utf-8")
 
@@ -135,6 +136,7 @@ class EvolinkImageInputNode:
         """
         prefix = kwargs.pop("prefix", "evolink")
         force_imgbb = kwargs.pop("force_imgbb", False)
+        imgbb_api_key = kwargs.pop("imgbb_api_key", "") or os.environ.get("IMGBB_API_KEY", "")
 
         image_count = 0
         saved_urls = []
@@ -151,7 +153,7 @@ class EvolinkImageInputNode:
                     # Check if URL is accessible, fallback to imgbb if not
                     if force_imgbb or not self._check_url_accessible(url):
                         print(f"[EvolinkImageInput] Output URL not accessible, uploading to imgbb...")
-                        imgbb_url = self._upload_to_imgbb(filepath)
+                        imgbb_url = self._upload_to_imgbb(filepath, imgbb_api_key)
                         if imgbb_url:
                             url = imgbb_url
                             print(f"[EvolinkImageInput] imgbb URL: {url}")

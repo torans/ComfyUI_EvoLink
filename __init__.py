@@ -1,2 +1,3 @@
-# ComfyUI_Evolink
-# Custom nodes for Evolink.ai API integration
+from .evolink_gpt_image2 import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS
+
+__all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]
